@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: endor-bot
+rules:
+- apiGroups:
+  - site.ddev.live
+  resources:
+  - siteimagesources
+  - siteclones
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+  - watch
