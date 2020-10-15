@@ -15,3 +15,11 @@ rules:
   - list
   - update
   - watch
+- apiGroups:
+  - cms.ddev.live
+  resources:
+  - drupalsites
+  verbs:
+  - get
+  - list
+  - watch
