@@ -135,6 +135,7 @@ github.com/docker/spdystream v0.0.0-20160310174837-449fdfce4d96/go.mod h1:Qh8CwZ
 github.com/docopt/docopt-go v0.0.0-20180111231733-ee0de3bc6815/go.mod h1:WwZ+bS3ebgob9U8Nd0kOddGdZWjyMGR8Wziv+TBNwSE=
 github.com/drud/cms-common v0.0.5-0.20201012075554-269eb86a7aaf h1:UqDMXgV6Bdo2X4y0gO2OOP7gKA2t8Vha1iRU7kJNa/0=
 github.com/drud/cms-common v0.0.5-0.20201012075554-269eb86a7aaf/go.mod h1:q1yByEYoYLpMZHjgao734yV0DvkDhvKD7A+rLHY/jZA=
+github.com/drud/cms-common v0.0.6 h1:ejGhqrBHHTEFHpMX+CjnMf1qfubrg/Q/m4ytxVoJcpk=
 github.com/drud/ddev-live-sdk v0.2.8-endor-rc4 h1:yGyyhOLpd4NhjnDeynzgFh7iFRezRX8VAK3oEzl4Bzk=
 github.com/drud/ddev-live-sdk v0.2.8-endor-rc4/go.mod h1:md0iz2pfuvBAzaYUk3DeZFZkOsTJNsBgR/MWBueMDUY=
 github.com/drud/site-operator/pkg/apis v0.0.21/go.mod h1:ZhOJCASimyWl/fdthd8wg9lN5erEBwhN9CFi0quZW+0=

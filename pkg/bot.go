@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,13 +15,26 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 
-	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
 	siteclientset "github.com/drud/ddev-live-sdk/golang/pkg/site/clientset"
 	sitefactory "github.com/drud/ddev-live-sdk/golang/pkg/site/informers/externalversions"
 	sitelister "github.com/drud/ddev-live-sdk/golang/pkg/site/listers/site/v1beta1"
 
 	drupalclientset "github.com/drud/ddev-live-sdk/golang/pkg/drupal/clientset"
 	drupalfactory "github.com/drud/ddev-live-sdk/golang/pkg/drupal/informers/externalversions"
+	drupallister "github.com/drud/ddev-live-sdk/golang/pkg/drupal/listers/cms/v1beta1"
+
+	typo3clientset "github.com/drud/ddev-live-sdk/golang/pkg/typo3/clientset"
+	typo3factory "github.com/drud/ddev-live-sdk/golang/pkg/typo3/informers/externalversions"
+	typo3lister "github.com/drud/ddev-live-sdk/golang/pkg/typo3/listers/cms/v1beta1"
+
+	wordpressclientset "github.com/drud/ddev-live-sdk/golang/pkg/wordpress/clientset"
+	wordpressfactory "github.com/drud/ddev-live-sdk/golang/pkg/wordpress/informers/externalversions"
+	wordpresslister "github.com/drud/ddev-live-sdk/golang/pkg/wordpress/listers/cms/v1beta1"
+
+	drupalapi "github.com/drud/ddev-live-sdk/golang/pkg/drupal/apis/cms/v1beta1"
+	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
+	typo3api "github.com/drud/ddev-live-sdk/golang/pkg/typo3/apis/cms/v1beta1"
+	wordpressapi "github.com/drud/ddev-live-sdk/golang/pkg/wordpress/apis/cms/v1beta1"
 )
 
 const (
@@ -36,19 +50,34 @@ type Bot interface {
 }
 
 type bot struct {
-	// this is used to determine which sites are build by which operator
-	annotation   string
 	scWatcher    scWatcher
 	cmsWatcher   cmsWatcher
 	updateEvents chan UpdateEvent
 
+	kubeClients
+}
+
+type kubeClients struct {
+	// this is used to determine which sites are build by which operator
+	annotation string
+
+	// clientset is used for creating resources
 	siteClientSet *siteclientset.Clientset
 
+	// listers and informers form cache for resources
+	// site API listers
 	sisLister   sitelister.SiteImageSourceLister
 	sisInformer cache.SharedIndexInformer
+	scLister    sitelister.SiteCloneLister
+	scInformer  cache.SharedIndexInformer
 
-	scLister   sitelister.SiteCloneLister
-	scInformer cache.SharedIndexInformer
+	// cms API listers
+	dLister   drupallister.DrupalSiteLister
+	dInformer cache.SharedIndexInformer
+	tLister   typo3lister.Typo3SiteLister
+	tInformer cache.SharedIndexInformer
+	wLister   wordpresslister.WordpressLister
+	wInformer cache.SharedIndexInformer
 }
 
 var (
@@ -64,6 +93,14 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 	if err != nil {
 		return nil, err
 	}
+	typo3, err := typo3clientset.NewForConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	wordpress, err := wordpressclientset.NewForConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
 	sf := sitefactory.NewSharedInformerFactory(scs, defaultResyncPeriod)
 	sisInformer := sf.Site().V1beta1().SiteImageSources().Informer()
 	sisLister := sf.Site().V1beta1().SiteImageSources().Lister()
@@ -73,19 +110,39 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 	df := drupalfactory.NewSharedInformerFactory(drupal, defaultResyncPeriod)
 	dLister := df.Cms().V1beta1().DrupalSites().Lister()
 	dInformer := df.Cms().V1beta1().DrupalSites().Informer()
+
+	tf := typo3factory.NewSharedInformerFactory(typo3, defaultResyncPeriod)
+	tLister := tf.Cms().V1beta1().Typo3Sites().Lister()
+	tInformer := tf.Cms().V1beta1().Typo3Sites().Informer()
+
+	wf := wordpressfactory.NewSharedInformerFactory(wordpress, defaultResyncPeriod)
+	wLister := wf.Cms().V1beta1().Wordpresses().Lister()
+	wInformer := wf.Cms().V1beta1().Wordpresses().Informer()
+
 	updateEvents := make(chan UpdateEvent, chanSize)
 
+	kubeClients := kubeClients{
+		annotation:    annotation,
+		siteClientSet: scs,
+		sisInformer:   sisInformer,
+		sisLister:     sisLister,
+		scInformer:    scInformer,
+		scLister:      scLister,
+		dLister:       dLister,
+		dInformer:     dInformer,
+		tLister:       tLister,
+		tInformer:     tInformer,
+		wLister:       wLister,
+		wInformer:     wInformer,
+	}
 	scWatcher := scWatcher{
-		annotation:   annotation,
-		scLister:     scLister,
 		updateEvents: updateEvents,
+		kubeClients:  kubeClients,
 	}
 	scInformer.AddEventHandler(scWatcher)
 	cmsWatcher := cmsWatcher{
-		annotation:   annotation,
-		scLister:     scLister,
-		dLister:      dLister,
 		updateEvents: updateEvents,
+		kubeClients:  kubeClients,
 	}
 	dInformer.AddEventHandler(cmsWatcher)
 
@@ -95,15 +152,10 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 	df.WaitForCacheSync(stopCh)
 
 	return &bot{
-		annotation:    annotation,
-		scWatcher:     scWatcher,
-		cmsWatcher:    cmsWatcher,
-		updateEvents:  updateEvents,
-		siteClientSet: scs,
-		sisInformer:   sisInformer,
-		sisLister:     sisLister,
-		scInformer:    scInformer,
-		scLister:      scLister,
+		scWatcher:    scWatcher,
+		cmsWatcher:   cmsWatcher,
+		updateEvents: updateEvents,
+		kubeClients:  kubeClients,
 	}, nil
 }
 
@@ -214,8 +266,9 @@ func (b *bot) previewSite(args ResponseRequest) string {
 	args.Annotations[repoAnnotation] = args.RepoURL
 	for _, sis := range filtered {
 		siteclone := siteClone(sis, args.CloneBranch, args.PR, args.Annotations)
-		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(sis.Name); err == nil {
-			msgs = append(msgs, previewCreating(sc))
+		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
+			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
+			msgs = append(msgs, msg)
 			continue
 		}
 		if sc, err := b.siteClientSet.SiteV1beta1().SiteClones(sis.Namespace).Create(siteclone); err != nil {
@@ -224,9 +277,11 @@ func (b *bot) previewSite(args ResponseRequest) string {
 				msgs = append(msgs, fmt.Sprintf(previewSiteError, siteclone.Spec.Origin.Name))
 				continue
 			}
-			msgs = append(msgs, previewCreating(sc))
+			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
+			msgs = append(msgs, msg)
 		} else {
-			msgs = append(msgs, previewCreating(sc))
+			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
+			msgs = append(msgs, msg)
 		}
 	}
 	if len(msgs) == 0 {
@@ -240,4 +295,67 @@ func (b *bot) ReceiveUpdate() (UpdateEvent, error) {
 		return msg, nil
 	}
 	return UpdateEvent{}, io.EOF
+}
+
+func (k kubeClients) getSiteStatus(namespace, name string) (siteStatus, error) {
+	ds, err := k.dLister.DrupalSites(namespace).Get(name)
+	if err == nil {
+		return siteStatus{conditions: ds.Status.Conditions, webStatus: ds.Status.WebStatus}, nil
+	}
+	ts, err := k.tLister.Typo3Sites(namespace).Get(name)
+	if err == nil {
+		return getCommonStatus(ts), nil
+	}
+	ws, err := k.wLister.Wordpresses(namespace).Get(name)
+	if err == nil {
+		return siteStatus{conditions: ws.Status.Conditions, webStatus: ws.Status.WebStatus}, nil
+	}
+	return siteStatus{}, fmt.Errorf("Site %v/%v not found", namespace, name)
+}
+
+func (k kubeClients) previewSiteUpdateFromSiteClone(sc *siteapi.SiteClone) (string, int, error) {
+	if sc.Annotations[botAnnotation] != k.annotation {
+		return "", 0, nil
+	}
+	pr, err := strconv.Atoi(sc.Annotations[prAnnotation])
+	if err != nil {
+		return previewGenericError, 0, fmt.Errorf("failed to parse %q annotation: %v", prAnnotation, err)
+	}
+
+	ss, err := k.getSiteStatus(sc.Namespace, sc.Spec.Clone.Name)
+	if err != nil {
+		klog.V(2).Info("Site %v/%v not found yet", sc.Namespace, sc.Spec.Clone.Name)
+	}
+	msg := previewCreating(sc, ss)
+	return msg, pr, nil
+}
+
+func (k kubeClients) previewSiteUpdateFromCMS(obj metav1.Object) (string, int, error) {
+	var sc *siteapi.SiteClone
+	for _, o := range obj.GetOwnerReferences() {
+		if o.Kind == "SiteClone" {
+			c, err := k.scLister.SiteClones(obj.GetNamespace()).Get(o.Name)
+			if err == nil {
+				sc = c
+				break
+			}
+		}
+	}
+	if sc == nil {
+		err := fmt.Errorf("failed to find SiteClone from owner references in %T, %v/%v", obj, obj.GetNamespace(), obj.GetName())
+		return previewGenericError, 0, err
+	}
+	return k.previewSiteUpdateFromSiteClone(sc)
+}
+
+func (k kubeClients) previewSiteUpdate(obj metav1.Object) (string, int, error) {
+	switch o := obj.(type) {
+	case *siteapi.SiteClone:
+		return k.previewSiteUpdateFromSiteClone(o)
+	case *drupalapi.DrupalSite, *typo3api.Typo3Site, *wordpressapi.Wordpress:
+		return k.previewSiteUpdateFromCMS(o)
+	default:
+		return "", 0, fmt.Errorf("unsupported type %T for preview site update", o)
+	}
+	return "", 0, nil
 }
