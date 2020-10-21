@@ -3,7 +3,9 @@ package pkg
 import (
 	"fmt"
 
+	common "github.com/drud/cms-common/api/v1beta1"
 	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
+	typo3api "github.com/drud/ddev-live-sdk/golang/pkg/typo3/apis/cms/v1beta1"
 )
 
 // These strings contain supported `/ddev-live-*` commands in PR/MR comments
@@ -38,18 +40,48 @@ const (
 
 	// Creation of `SiteClone` succeeded, responding back to user that site cloning is in progress
 	// using referenced origin site
-	previewCreatingMsg = `**Creating preview site** ` + "`%v`" + ` in ` + "`%v`" + `. This will be kept up to date with site's current status as well as a preview URL once the site is fully available. You can also use the ` + "`ddev-live`" + ` CLI to get more information about the preview site creation progress:
+	previewCreatingMsg = "`%v`" + ` in ` + "`%v`" + `. This will be kept up to date with site's current status. You can also use the ` + "`ddev-live`" + ` CLI to get more information about the preview site creation progress:
 ` + "```" + `
 $ ddev-live describe clone %v
 $ ddev-live describe site %v
 ` + "```"
 )
 
-func previewCreating(sc *siteapi.SiteClone) string {
+type siteStatus struct {
+	conditions []common.Condition
+	webStatus  common.WebStatus
+}
+
+func getCommonStatus(t3 *typo3api.Typo3Site) siteStatus {
+	var conditions []common.Condition
+	for _, c := range t3.Status.Conditions {
+		conditions = append(conditions, common.Condition{
+			Type:               common.ConditionType(c.Type),
+			Status:             c.Status,
+			LastTransitionTime: c.LastTransitionTime,
+			Reason:             c.Reason,
+			Message:            c.Message,
+		})
+	}
+	return siteStatus{conditions: conditions, webStatus: common.WebStatus(t3.Status.WebStatus)}
+}
+
+func previewCreating(sc *siteapi.SiteClone, site siteStatus) string {
 	msg := fmt.Sprintf(previewCreatingMsg, sc.Name, sc.Namespace, sc.Name, sc.Spec.Clone.Name)
 	if err := sc.Error(); err != nil {
-		return fmt.Sprintf("%v\n**Failed:** %v", msg, err)
+		return fmt.Sprintf("**Creating preview site** %v\n**Failed:** %v", msg, err)
 	}
-	_, ready := sc.Ready()
-	return fmt.Sprintf("%v\n**Status:** %v", msg, ready)
+	scReady, scReadyMsg := sc.Ready()
+	if !scReady {
+		return fmt.Sprintf("**Creating preview site** %v\n**Status:** %v", msg, scReadyMsg)
+	}
+	sReady, _ := common.Ready(site.conditions)
+	sn := fmt.Sprintf("%v/%v", sc.Namespace, sc.Spec.Clone.Name)
+	if !sReady {
+		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site %v is getting ready", msg, sn)
+	}
+	if len(site.webStatus.URLs) == 0 {
+		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site %v is waiting for preview URL", msg, sn)
+	}
+	return fmt.Sprintf("**Preview site created** %v\n**Preview URL:** %v", msg, site.webStatus.URLs[0])
 }

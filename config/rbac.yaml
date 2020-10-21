@@ -19,6 +19,8 @@ rules:
   - cms.ddev.live
   resources:
   - drupalsites
+  - typo3sites
+  - wordpresses
   verbs:
   - get
   - list

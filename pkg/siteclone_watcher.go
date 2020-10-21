@@ -1,17 +1,14 @@
 package pkg
 
 import (
-	"k8s.io/klog"
-	"strconv"
-
 	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
-	sitelister "github.com/drud/ddev-live-sdk/golang/pkg/site/listers/site/v1beta1"
+	"k8s.io/klog"
 )
 
 type scWatcher struct {
-	annotation   string
-	scLister     sitelister.SiteCloneLister
 	updateEvents chan UpdateEvent
+
+	kubeClients
 }
 
 func (w scWatcher) OnAdd(obj interface{}) {
@@ -44,15 +41,14 @@ func (w scWatcher) OnDelete(obj interface{}) {
 }
 
 func (w scWatcher) enqueueMsg(sc *siteapi.SiteClone) {
-	if sc.Annotations == nil || sc.Annotations[botAnnotation] != w.annotation {
+	if sc.Annotations == nil || sc.Annotations[botAnnotation] != w.kubeClients.annotation {
 		return
 	}
-	pr, err := strconv.Atoi(sc.Annotations[prAnnotation])
+	msg, pr, err := w.previewSiteUpdate(sc)
 	if err != nil {
-		klog.Errorf("dropping event for sc %v/%v, failed to convert PR annotation: %v", sc.Namespace, sc.Name, err)
+		klog.Errorf("dropping event for sc %v/%v: %v", sc.Namespace, sc.Name, err)
 		return
 	}
-	msg := previewCreating(sc)
 	ue := UpdateEvent{
 		Message:     msg,
 		PR:          pr,
