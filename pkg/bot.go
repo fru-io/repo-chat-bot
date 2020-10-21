@@ -145,11 +145,17 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 		kubeClients:  kubeClients,
 	}
 	dInformer.AddEventHandler(cmsWatcher)
+	tInformer.AddEventHandler(cmsWatcher)
+	wInformer.AddEventHandler(cmsWatcher)
 
-	sf.Start(stopCh)
-	sf.WaitForCacheSync(stopCh)
 	df.Start(stopCh)
+	tf.Start(stopCh)
+	wf.Start(stopCh)
+	sf.Start(stopCh)
 	df.WaitForCacheSync(stopCh)
+	tf.WaitForCacheSync(stopCh)
+	wf.WaitForCacheSync(stopCh)
+	sf.WaitForCacheSync(stopCh)
 
 	return &bot{
 		scWatcher:    scWatcher,
@@ -160,6 +166,9 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 }
 
 func (b *bot) Response(args ResponseRequest) string {
+	if isBot(args.Body) {
+		return ""
+	}
 	lines := strings.Split(strings.Replace(args.Body, "\r\n", "\n", -1), "\n")
 	resp := make(map[string]string)
 	for _, line := range lines {
@@ -167,10 +176,14 @@ func (b *bot) Response(args ResponseRequest) string {
 			continue
 		}
 		switch line {
-		case ping:
+		case Ping:
 			resp[line] = pong
-		case previewSite:
+		case Help:
+			resp[line] = helpResponse
+		case PreviewSite:
 			resp[line] = b.previewSite(args)
+		case DeletePreviewSite:
+			resp[line] = b.deletePreviewSite(args)
 		default:
 			resp[line] = fmt.Sprintf("Unknown command: `%v`", line)
 		}
@@ -234,6 +247,19 @@ func filterSis(list []*siteapi.SiteImageSource, repoURL, originBranch string) []
 	return filtered
 }
 
+func filterSc(list []*siteapi.SiteClone, repoURL string, pr int) []*siteapi.SiteClone {
+	var filtered []*siteapi.SiteClone
+	prStr := fmt.Sprintf("%d", pr)
+	for _, sc := range list {
+		if sc.Annotations != nil &&
+			sc.Annotations[repoAnnotation] == repoURL &&
+			sc.Annotations[prAnnotation] == prStr {
+			filtered = append(filtered, sc)
+		}
+	}
+	return filtered
+}
+
 func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotations map[string]string) *siteapi.SiteClone {
 	return &siteapi.SiteClone{
 		ObjectMeta: metav1.ObjectMeta{
@@ -251,6 +277,30 @@ func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotat
 			},
 		},
 	}
+}
+
+func (b *bot) deletePreviewSite(args ResponseRequest) string {
+	list, err := b.scLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed listing SiteClones: %v", err)
+		return previewGenericError
+	}
+	filtered := filterSc(list, args.RepoURL, args.PR)
+	var msgs []string
+	for _, sc := range filtered {
+		if err := b.siteClientSet.SiteV1beta1().SiteClones(sc.Namespace).Delete(sc.Name, nil); err != nil && !kerrors.IsNotFound(err) {
+			// error asking API to delete SiteClone other than IsNotFound
+			klog.Errorf("failed to delete SiteClone %v/%v: %v", sc.Namespace, sc.Name, err)
+			msgs = append(msgs, fmt.Sprintf(deleteSiteError, sc.Spec.Clone.Name, sc.Namespace))
+		} else if err == nil {
+			// no error, we have successfully deleted SiteClone
+			msgs = append(msgs, fmt.Sprintf(deleteSite, sc.Spec.Clone.Name, sc.Namespace))
+		}
+	}
+	if len(msgs) == 0 {
+		return fmt.Sprintf("%v\n___\n%v", deleteSiteNone, helpResponse)
+	}
+	return strings.Join(msgs, "\n\n")
 }
 
 func (b *bot) previewSite(args ResponseRequest) string {
@@ -324,7 +374,7 @@ func (k kubeClients) previewSiteUpdateFromSiteClone(sc *siteapi.SiteClone) (stri
 
 	ss, err := k.getSiteStatus(sc.Namespace, sc.Spec.Clone.Name)
 	if err != nil {
-		klog.V(2).Info("Site %v/%v not found yet", sc.Namespace, sc.Spec.Clone.Name)
+		klog.V(2).Infof("Site %v/%v not found yet", sc.Namespace, sc.Spec.Clone.Name)
 	}
 	msg := previewCreating(sc, ss)
 	return msg, pr, nil

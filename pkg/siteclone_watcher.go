@@ -41,6 +41,9 @@ func (w scWatcher) OnDelete(obj interface{}) {
 }
 
 func (w scWatcher) enqueueMsg(sc *siteapi.SiteClone) {
+	if !sc.DeletionTimestamp.IsZero() {
+		return
+	}
 	if sc.Annotations == nil || sc.Annotations[botAnnotation] != w.kubeClients.annotation {
 		return
 	}
