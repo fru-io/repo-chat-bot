@@ -1,4 +1,4 @@
-module github.com/drud/endor-bot
+module github.com/drud/repo-chat-bot
 
 go 1.15
 

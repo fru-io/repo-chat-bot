@@ -1,6 +1,6 @@
-# GitHub and GitLab PR/MR bot for Endor
+# GitHub and GitLab PR/MR bot for DDEV-Live
 
-This repository contains common functionality for GitHub and GitLab bot for Endor. DDEV-Live users will be able to 
+This repository contains common functionality for GitHub and GitLab bot. DDEV-Live users will be able to 
 communicate with ddev-live platform using PR or MR comments formatted as commands. Initial scope is limited to only 
 preview sites, also known as site cloning for PRs/MRs.
 
@@ -26,7 +26,7 @@ by user created `SiteImageSource`.
 
 #### Basic test
 
-The endor-bot supports simple ping/pong command response to test the integration:
+The repo-chat-bot supports simple ping/pong command response to test the integration:
 
 Comment on PR/MR with ddev-live command:
 ```

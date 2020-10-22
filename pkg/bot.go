@@ -38,9 +38,9 @@ import (
 )
 
 const (
-	botAnnotation  = "ddev.live/endor-bot"
-	prAnnotation   = "ddev.live/endor-bot-pr"
-	repoAnnotation = "ddev.live/endor-bot-repo"
+	botAnnotation  = "ddev.live/repo-chat-bot"
+	prAnnotation   = "ddev.live/repo-chat-bot-pr"
+	repoAnnotation = "ddev.live/repo-chat-bot-repo"
 	chanSize       = 1024
 )
 
