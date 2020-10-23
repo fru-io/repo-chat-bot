@@ -56,6 +56,9 @@ func (w cmsWatcher) OnDelete(obj interface{}) {
 }
 
 func (w cmsWatcher) enqeueueMsg(obj metav1.Object) {
+	if !obj.GetDeletionTimestamp().IsZero() {
+		return
+	}
 	msg, pr, err := w.previewSiteUpdate(obj)
 	if err != nil {
 		klog.Errorf("dropping event for sc %v/%v: %v", obj.GetNamespace(), obj.GetName(), err)

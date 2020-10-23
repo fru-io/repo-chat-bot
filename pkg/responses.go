@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"strings"
 
 	common "github.com/drud/cms-common/api/v1beta1"
 	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
@@ -14,16 +15,30 @@ const (
 	commandPrefix = "/ddev-live-"
 
 	// Ping/pong
-	ping = "/ddev-live-ping"
+	Ping = "/ddev-live-ping"
+
+	// Print help message
+	Help = "/ddev-live-help"
 
 	// Create preview site
-	previewSite = "/ddev-live-preview-site"
+	PreviewSite = "/ddev-live-preview-site"
+
+	// Delete preview site
+	DeletePreviewSite = "/ddev-live-delete-preview-site"
 )
 
 // These strings contain responses for `/ddev-live-*` commands in PR/MR comments
 const (
 	// Pong
 	pong = "ddev-live-pong"
+
+	// Help message how to use the repo chat bot
+	helpResponse = "**DDEV-Live preview bot** available commands\n" +
+		"```\n" +
+		Help + " - displays this help message\n" +
+		PreviewSite + " - creates preview site cloning origin branch\n" +
+		DeletePreviewSite + " - deletes the preview site\n" +
+		"```"
 
 	// Generic error when site cloning failed. We don't want to expose internal details on PR comments,
 	// logs will contain more information about what failed
@@ -45,6 +60,16 @@ const (
 $ ddev-live describe clone %v
 $ ddev-live describe site %v
 ` + "```"
+
+	// Deletion of `SiteClone` failed for a specific origin site,
+	// logs will contain more information about what failed
+	deleteSiteError = "**Internal error** failed to delete preview site `%v` in `%v`"
+
+	// Deletion of `SiteClone` in progress
+	deleteSite = "**Deleting preview site** `%v` in `%v`"
+
+	// No site to be deleted
+	deleteSiteNone = "**No preview site to be deleted**"
 )
 
 type siteStatus struct {
@@ -84,4 +109,14 @@ func previewCreating(sc *siteapi.SiteClone, site siteStatus) string {
 		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site %v is waiting for preview URL", msg, sn)
 	}
 	return fmt.Sprintf("**Preview site created** %v\n**Preview URL:** %v", msg, site.webStatus.URLs[0])
+}
+
+func isBot(msg string) bool {
+	if msg == helpResponse {
+		return true
+	}
+	if strings.HasPrefix(msg, deleteSiteNone) {
+		return true
+	}
+	return false
 }
