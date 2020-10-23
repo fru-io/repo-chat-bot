@@ -76,6 +76,9 @@ $ ddev-live describe site %v
 
 	// No site to be deleted
 	deleteSiteNone = "**No preview site to be deleted**"
+
+	// The `SiteClone` was deleted, child resources will be garbage collected
+	deletedSite = "**Deleted preview site** `%v` in `%v`"
 )
 
 type siteStatus struct {
