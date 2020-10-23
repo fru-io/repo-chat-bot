@@ -179,11 +179,15 @@ func (b *bot) Response(args ResponseRequest) string {
 		case Ping:
 			resp[line] = pong
 		case Help:
-			resp[line] = helpResponse
+			resp[line] = b.helpResponse(args, true)
+		case HelpOnPROpen:
+			resp[line] = b.helpResponse(args, false)
 		case PreviewSite:
 			resp[line] = b.previewSite(args)
 		case DeletePreviewSite:
-			resp[line] = b.deletePreviewSite(args)
+			resp[line] = b.deletePreviewSite(args, true)
+		case ClosePreviewSite:
+			resp[line] = b.deletePreviewSite(args, false)
 		default:
 			resp[line] = fmt.Sprintf("Unknown command: `%v`", line)
 		}
@@ -279,11 +283,35 @@ func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotat
 	}
 }
 
-func (b *bot) deletePreviewSite(args ResponseRequest) string {
+func (b *bot) helpResponse(args ResponseRequest, verbose bool) string {
+	if verbose {
+		// display bot help message when user asks for it even when there are no origin to clone from
+		return helpResponse
+	}
+
+	list, err := b.sisLister.List(labels.Everything())
+	if err != nil {
+		klog.Errorf("failed listing SiteImageSource: %v", err)
+		// don't display any bot help message on repos that don't have origin to clone from
+		return ""
+	}
+	filtered := filterSis(list, args.RepoURL, args.OriginBranch)
+	if len(filtered) == 0 {
+		// don't display any bot help message on repos that don't have origin to clone from
+		return ""
+	}
+	return helpResponse
+}
+
+func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string {
 	list, err := b.scLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("failed listing SiteClones: %v", err)
-		return previewGenericError
+		if verboseErrors {
+			return previewGenericError
+		} else {
+			return ""
+		}
 	}
 	filtered := filterSc(list, args.RepoURL, args.PR)
 	var msgs []string
@@ -291,13 +319,15 @@ func (b *bot) deletePreviewSite(args ResponseRequest) string {
 		if err := b.siteClientSet.SiteV1beta1().SiteClones(sc.Namespace).Delete(sc.Name, nil); err != nil && !kerrors.IsNotFound(err) {
 			// error asking API to delete SiteClone other than IsNotFound
 			klog.Errorf("failed to delete SiteClone %v/%v: %v", sc.Namespace, sc.Name, err)
-			msgs = append(msgs, fmt.Sprintf(deleteSiteError, sc.Spec.Clone.Name, sc.Namespace))
+			if verboseErrors {
+				msgs = append(msgs, fmt.Sprintf(deleteSiteError, sc.Spec.Clone.Name, sc.Namespace))
+			}
 		} else if err == nil {
 			// no error, we have successfully deleted SiteClone
 			msgs = append(msgs, fmt.Sprintf(deleteSite, sc.Spec.Clone.Name, sc.Namespace))
 		}
 	}
-	if len(msgs) == 0 {
+	if len(msgs) == 0 && verboseErrors {
 		return fmt.Sprintf("%v\n___\n%v", deleteSiteNone, helpResponse)
 	}
 	return strings.Join(msgs, "\n\n")

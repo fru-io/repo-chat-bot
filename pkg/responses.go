@@ -17,14 +17,20 @@ const (
 	// Ping/pong
 	Ping = "/ddev-live-ping"
 
-	// Print help message
+	// Print help message for users calling the command
 	Help = "/ddev-live-help"
+
+	// Print help message on PR open, only when applicable
+	HelpOnPROpen = "/ddev-live-help-on-pr-open"
 
 	// Create preview site
 	PreviewSite = "/ddev-live-preview-site"
 
-	// Delete preview site
+	// Delete preview site, always provides verbose response event when no site exists
 	DeletePreviewSite = "/ddev-live-delete-preview-site"
+
+	// Close preview site, provides output only in case a preview site existed. This is for PR closing.
+	ClosePreviewSite = "/ddev-live-close-preview-site"
 )
 
 // These strings contain responses for `/ddev-live-*` commands in PR/MR comments
