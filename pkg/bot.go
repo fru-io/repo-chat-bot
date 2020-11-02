@@ -439,3 +439,14 @@ func (k kubeClients) previewSiteUpdate(obj metav1.Object) (string, int, error) {
 	}
 	return "", 0, nil
 }
+
+func (k kubeClients) deletePreviewSiteUpdate(sc *siteapi.SiteClone) (string, int, error) {
+	if sc.Annotations[botAnnotation] != k.annotation {
+		return "", 0, nil
+	}
+	pr, err := strconv.Atoi(sc.Annotations[prAnnotation])
+	if err != nil {
+		return previewGenericError, 0, fmt.Errorf("failed to parse %q annotation: %v", prAnnotation, err)
+	}
+	return fmt.Sprintf(deletedSite, sc.Spec.Clone.Name, sc.Namespace), pr, nil
+}

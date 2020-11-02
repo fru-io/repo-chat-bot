@@ -37,7 +37,31 @@ func (w scWatcher) OnUpdate(oldObj, newObj interface{}) {
 }
 
 func (w scWatcher) OnDelete(obj interface{}) {
-	return
+	o, ok := obj.(*siteapi.SiteClone)
+	if !ok {
+		return
+	}
+	msg, pr, err := w.deletePreviewSiteUpdate(o)
+	if err != nil {
+		klog.Errorf("dropping event for sc %v/%v: %v", o.GetNamespace(), o.GetName(), err)
+		return
+	}
+	if msg == "" {
+		klog.Errorf("dropping event for sc %v/%v: empty response message", o.GetNamespace(), o.GetName())
+		return
+	}
+	ue := UpdateEvent{
+		Message:     msg,
+		PR:          pr,
+		RepoURL:     o.GetAnnotations()[repoAnnotation],
+		Type:        "SiteCloneDelete",
+		Annotations: o.GetAnnotations(),
+	}
+	if len(w.updateEvents) == cap(w.updateEvents) {
+		klog.Errorf("dropping event %v due to channel capacity: len(%v) == cap(%v)", ue, len(w.updateEvents), cap(w.updateEvents))
+		return
+	}
+	w.updateEvents <- ue
 }
 
 func (w scWatcher) enqueueMsg(sc *siteapi.SiteClone) {
