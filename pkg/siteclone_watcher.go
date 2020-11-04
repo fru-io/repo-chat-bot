@@ -71,18 +71,12 @@ func (w scWatcher) enqueueMsg(sc *siteapi.SiteClone) {
 	if sc.Annotations == nil || sc.Annotations[botAnnotation] != w.kubeClients.annotation {
 		return
 	}
-	msg, pr, err := w.previewSiteUpdate(sc)
+	ue, err := w.previewSiteUpdate(sc)
 	if err != nil {
 		klog.Errorf("dropping event for sc %v/%v: %v", sc.Namespace, sc.Name, err)
 		return
 	}
-	ue := UpdateEvent{
-		Message:     msg,
-		PR:          pr,
-		RepoURL:     sc.Annotations[repoAnnotation],
-		Type:        "SiteCloneUpdate",
-		Annotations: sc.Annotations,
-	}
+	ue.Type = "SiteCloneUpdate"
 	if len(w.updateEvents) == cap(w.updateEvents) {
 		klog.Errorf("dropping event %v due to channel capacity: len(%v) == cap(%v)", ue, len(w.updateEvents), cap(w.updateEvents))
 		return

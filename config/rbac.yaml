@@ -25,3 +25,13 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - core
+  - ""
+  resources:
+  - pods
+  - pods/log
+  verbs:
+  - get
+  - list
+  - watch

@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/url"
@@ -8,9 +9,14 @@ import (
 	"strings"
 	"time"
 
+	common "github.com/drud/cms-common/api/v1beta1"
+	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	kubefactory "k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	corelister "k8s.io/client-go/listers/core/v1"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
@@ -38,10 +44,15 @@ import (
 )
 
 const (
-	botAnnotation  = "ddev.live/repo-chat-bot"
 	prAnnotation   = "ddev.live/repo-chat-bot-pr"
 	repoAnnotation = "ddev.live/repo-chat-bot-repo"
+	botAnnotation  = "ddev.live/repo-chat-bot"
 	chanSize       = 1024
+)
+
+var (
+	defaultResyncPeriod = time.Minute * 30
+	logLimitBytes       = int64(4 * 1024)
 )
 
 type Bot interface {
@@ -60,6 +71,8 @@ type bot struct {
 type kubeClients struct {
 	// this is used to determine which sites are build by which operator
 	annotation string
+	// used to wait for all informer caches to get synced
+	wait chan bool
 
 	// clientset is used for creating resources
 	siteClientSet *siteclientset.Clientset
@@ -78,11 +91,11 @@ type kubeClients struct {
 	tInformer cache.SharedIndexInformer
 	wLister   wordpresslister.WordpressLister
 	wInformer cache.SharedIndexInformer
-}
 
-var (
-	defaultResyncPeriod = time.Minute * 30
-)
+	// core API client and lister
+	coreClientSet *kubernetes.Clientset
+	podLister     corelister.PodLister
+}
 
 func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan struct{}) (Bot, error) {
 	scs, err := siteclientset.NewForConfig(kubeconfig)
@@ -98,6 +111,10 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 		return nil, err
 	}
 	wordpress, err := wordpressclientset.NewForConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	kcs, err := kubernetes.NewForConfig(kubeconfig)
 	if err != nil {
 		return nil, err
 	}
@@ -119,10 +136,14 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 	wLister := wf.Cms().V1beta1().Wordpresses().Lister()
 	wInformer := wf.Cms().V1beta1().Wordpresses().Informer()
 
+	kf := kubefactory.NewSharedInformerFactory(kcs, defaultResyncPeriod)
+	podLister := kf.Core().V1().Pods().Lister()
+
 	updateEvents := make(chan UpdateEvent, chanSize)
 
 	kubeClients := kubeClients{
 		annotation:    annotation,
+		wait:          make(chan bool, 1),
 		siteClientSet: scs,
 		sisInformer:   sisInformer,
 		sisLister:     sisLister,
@@ -134,6 +155,8 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 		tInformer:     tInformer,
 		wLister:       wLister,
 		wInformer:     wInformer,
+		podLister:     podLister,
+		coreClientSet: kcs,
 	}
 	scWatcher := scWatcher{
 		updateEvents: updateEvents,
@@ -152,10 +175,13 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 	tf.Start(stopCh)
 	wf.Start(stopCh)
 	sf.Start(stopCh)
+	kf.Start(stopCh)
 	df.WaitForCacheSync(stopCh)
 	tf.WaitForCacheSync(stopCh)
 	wf.WaitForCacheSync(stopCh)
 	sf.WaitForCacheSync(stopCh)
+	kf.WaitForCacheSync(stopCh)
+	close(kubeClients.wait)
 
 	return &bot{
 		scWatcher:    scWatcher,
@@ -347,8 +373,8 @@ func (b *bot) previewSite(args ResponseRequest) string {
 	for _, sis := range filtered {
 		siteclone := siteClone(sis, args.CloneBranch, args.PR, args.Annotations)
 		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
-			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
-			msgs = append(msgs, msg)
+			ue, _ := b.previewSiteUpdate(sc)
+			msgs = append(msgs, ue.Message)
 			continue
 		}
 		if sc, err := b.siteClientSet.SiteV1beta1().SiteClones(sis.Namespace).Create(siteclone); err != nil {
@@ -357,11 +383,11 @@ func (b *bot) previewSite(args ResponseRequest) string {
 				msgs = append(msgs, fmt.Sprintf(previewSiteError, siteclone.Spec.Origin.Name))
 				continue
 			}
-			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
-			msgs = append(msgs, msg)
+			ue, _ := b.previewSiteUpdate(sc)
+			msgs = append(msgs, ue.Message)
 		} else {
-			msg, _, _ := b.previewSiteUpdateFromSiteClone(sc)
-			msgs = append(msgs, msg)
+			ue, _ := b.previewSiteUpdate(sc)
+			msgs = append(msgs, ue.Message)
 		}
 	}
 	if len(msgs) == 0 {
@@ -393,24 +419,36 @@ func (k kubeClients) getSiteStatus(namespace, name string) (siteStatus, error) {
 	return siteStatus{}, fmt.Errorf("Site %v/%v not found", namespace, name)
 }
 
-func (k kubeClients) previewSiteUpdateFromSiteClone(sc *siteapi.SiteClone) (string, int, error) {
+func (k kubeClients) previewSiteUpdateFromSiteClone(sc *siteapi.SiteClone) (UpdateEvent, error) {
 	if sc.Annotations[botAnnotation] != k.annotation {
-		return "", 0, nil
+		return UpdateEvent{}, nil
 	}
 	pr, err := strconv.Atoi(sc.Annotations[prAnnotation])
 	if err != nil {
-		return previewGenericError, 0, fmt.Errorf("failed to parse %q annotation: %v", prAnnotation, err)
+		return UpdateEvent{}, fmt.Errorf("failed to parse %q annotation: %v", prAnnotation, err)
 	}
 
 	ss, err := k.getSiteStatus(sc.Namespace, sc.Spec.Clone.Name)
 	if err != nil {
 		klog.V(2).Infof("Site %v/%v not found yet", sc.Namespace, sc.Spec.Clone.Name)
 	}
-	msg := previewCreating(sc, ss)
-	return msg, pr, nil
+	var bs buildStatus
+	if c := common.GetCondition(ss.conditions, common.SiteImageSourceHealthy); c != nil && c.Reason == "Failed" {
+		bs = k.getBuildState(sc.Namespace, sc.Spec.Clone.Name)
+	} else {
+		bs = buildStatus{}
+	}
+	msg := previewCreating(sc, ss, bs)
+	ue := UpdateEvent{
+		Message:     msg,
+		PR:          pr,
+		RepoURL:     sc.Annotations[repoAnnotation],
+		Annotations: sc.Annotations,
+	}
+	return ue, nil
 }
 
-func (k kubeClients) previewSiteUpdateFromCMS(obj metav1.Object) (string, int, error) {
+func (k kubeClients) previewSiteUpdateFromCMS(obj metav1.Object) (UpdateEvent, error) {
 	var sc *siteapi.SiteClone
 	for _, o := range obj.GetOwnerReferences() {
 		if o.Kind == "SiteClone" {
@@ -423,21 +461,96 @@ func (k kubeClients) previewSiteUpdateFromCMS(obj metav1.Object) (string, int, e
 	}
 	if sc == nil {
 		err := fmt.Errorf("failed to find SiteClone from owner references in %T, %v/%v", obj, obj.GetNamespace(), obj.GetName())
-		return previewGenericError, 0, err
+		return UpdateEvent{}, err
 	}
 	return k.previewSiteUpdateFromSiteClone(sc)
 }
 
-func (k kubeClients) previewSiteUpdate(obj metav1.Object) (string, int, error) {
+func getFirstFailedCont(pod *v1.Pod) string {
+	exitCodes := make(map[string]int32)
+	for _, c := range pod.Status.ContainerStatuses {
+		if c.State.Terminated != nil {
+			exitCodes[c.Name] = c.State.Terminated.ExitCode
+		}
+	}
+	for _, c := range pod.Spec.Containers {
+		if exitCodes[c.Name] != 0 {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+func (k kubeClients) getFailureLog(pods []*v1.Pod) string {
+	lastPod, ps := pods[0], pods[1:]
+	for i, p := range ps {
+		if p.CreationTimestamp.After(lastPod.CreationTimestamp.Time) {
+			lastPod = ps[i]
+		}
+	}
+	failedCont := getFirstFailedCont(lastPod)
+	if failedCont == "" {
+		return ""
+	}
+	opts := &v1.PodLogOptions{Container: failedCont, LimitBytes: &logLimitBytes}
+	// NOTE: this is not cached, we should ensure to fetch the logs only when necessary
+	req := k.coreClientSet.CoreV1().Pods(lastPod.Namespace).GetLogs(lastPod.Name, opts)
+	podLogs, err := req.Stream()
+	if err != nil {
+		klog.Errorf("failed getting logs from %v/%v-%v: %v", lastPod.Namespace, lastPod.Name, failedCont, err)
+		return siteBuildLogFetchFailed
+	}
+	defer podLogs.Close()
+	buf := new(bytes.Buffer)
+	if _, err := io.Copy(buf, podLogs); err != nil {
+		klog.Errorf("failed copying logs from %v/%v-%v: %v", lastPod.Namespace, lastPod.Name, failedCont, err)
+		return siteBuildLogFetchFailed
+	}
+	return buf.String()
+}
+
+func (k kubeClients) getFailedBuildLogs(sis *siteapi.SiteImageSource) string {
+	selector := labels.Set(map[string]string{siteapi.SiteLabel: sis.Name, "app.kubernetes.io/managed-by": "tekton-pipelines"})
+	pods, err := k.podLister.Pods(sis.Namespace).List(selector.AsSelector())
+	if err != nil {
+		klog.Errorf("failed to fetch build pods for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
+		return siteBuildLogFetchFailed
+	}
+	if len(pods) == 0 {
+		klog.Errorf("no build pods for SiteImageSource %v/%v", sis.Namespace, sis.Name)
+		return noSiteBuilds
+	}
+	return k.getFailureLog(pods)
+}
+
+func (k kubeClients) getBuildState(namespace, name string) buildStatus {
+	sis, err := k.sisLister.SiteImageSources(namespace).Get(name)
+	if err != nil {
+		klog.Errorf("failed to determine build state for SiteImageSource %v/%v: %v", namespace, name, err)
+		return buildStatus{failed: false}
+	}
+	if failed, msg := sis.Failed(); failed {
+		logs := k.getFailedBuildLogs(sis)
+		return buildStatus{failed: true, failState: msg, logs: logs}
+	}
+	return buildStatus{failed: false}
+}
+
+func (k kubeClients) previewSiteUpdate(obj interface{}) (UpdateEvent, error) {
+	<-k.wait
 	switch o := obj.(type) {
 	case *siteapi.SiteClone:
 		return k.previewSiteUpdateFromSiteClone(o)
-	case *drupalapi.DrupalSite, *typo3api.Typo3Site, *wordpressapi.Wordpress:
+	case *drupalapi.DrupalSite:
+		return k.previewSiteUpdateFromCMS(o)
+	case *typo3api.Typo3Site:
+		return k.previewSiteUpdateFromCMS(o)
+	case *wordpressapi.Wordpress:
 		return k.previewSiteUpdateFromCMS(o)
 	default:
-		return "", 0, fmt.Errorf("unsupported type %T for preview site update", o)
+		return UpdateEvent{}, fmt.Errorf("unsupported type %T for preview site update", o)
 	}
-	return "", 0, nil
+	return UpdateEvent{}, nil
 }
 
 func (k kubeClients) deletePreviewSiteUpdate(sc *siteapi.SiteClone) (string, int, error) {
