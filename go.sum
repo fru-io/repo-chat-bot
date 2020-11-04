@@ -133,12 +133,11 @@ github.com/docker/go-units v0.3.3/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDD
 github.com/docker/go-units v0.4.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/docker/spdystream v0.0.0-20160310174837-449fdfce4d96/go.mod h1:Qh8CwZgvJUkLughtfhJv5dyTYa91l1fOUCrgjqmcifM=
 github.com/docopt/docopt-go v0.0.0-20180111231733-ee0de3bc6815/go.mod h1:WwZ+bS3ebgob9U8Nd0kOddGdZWjyMGR8Wziv+TBNwSE=
-github.com/drud/cms-common v0.0.5-0.20201012075554-269eb86a7aaf h1:UqDMXgV6Bdo2X4y0gO2OOP7gKA2t8Vha1iRU7kJNa/0=
-github.com/drud/cms-common v0.0.5-0.20201012075554-269eb86a7aaf/go.mod h1:q1yByEYoYLpMZHjgao734yV0DvkDhvKD7A+rLHY/jZA=
-github.com/drud/cms-common v0.0.6 h1:ejGhqrBHHTEFHpMX+CjnMf1qfubrg/Q/m4ytxVoJcpk=
-github.com/drud/ddev-live-sdk v0.2.8-endor-rc4 h1:yGyyhOLpd4NhjnDeynzgFh7iFRezRX8VAK3oEzl4Bzk=
-github.com/drud/ddev-live-sdk v0.2.8-endor-rc4/go.mod h1:md0iz2pfuvBAzaYUk3DeZFZkOsTJNsBgR/MWBueMDUY=
-github.com/drud/site-operator/pkg/apis v0.0.21/go.mod h1:ZhOJCASimyWl/fdthd8wg9lN5erEBwhN9CFi0quZW+0=
+github.com/drud/cms-common v0.0.7 h1:1kdmCJ9+wYLq/TIyJmzpU1w+g646md0JYmWAaGzEugs=
+github.com/drud/cms-common v0.0.7/go.mod h1:192s1qiqNptbI71pGz1e5kqx8B4R9nexWAymwqXFw6k=
+github.com/drud/ddev-live-sdk v0.2.8 h1:bF4cT5HWXIQqIT7vR7zt2j2sXD+xiXzm03AtOvHlhtA=
+github.com/drud/ddev-live-sdk v0.2.8/go.mod h1:/DjcTitlQ8nerK+VyEkeUy3R+BYIUeYRVXATusz3P8Q=
+github.com/drud/site-operator/pkg/apis v0.0.25/go.mod h1:ZhOJCASimyWl/fdthd8wg9lN5erEBwhN9CFi0quZW+0=
 github.com/dustin/go-humanize v0.0.0-20171111073723-bb3d318650d4/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/eapache/go-resiliency v1.1.0/go.mod h1:kFI+JgMyC7bLPUVY133qvEBtVayf5mFgVsvEsIPBvNs=

@@ -17,16 +17,12 @@ type cmsWatcher struct {
 	kubeClients
 }
 
-type statusCheck interface {
-	Ready() (bool, string)
-}
-
 func (w cmsWatcher) OnAdd(obj interface{}) {
 	meta := validMeta(obj)
 	if meta == nil {
 		return
 	}
-	w.enqeueueMsg(meta)
+	w.enqeueueMsg(meta, obj)
 	return
 }
 
@@ -35,42 +31,23 @@ func (w cmsWatcher) OnUpdate(oldObj, newObj interface{}) {
 	if meta == nil {
 		return
 	}
-	oldStatus, ok := oldObj.(statusCheck)
-	if !ok {
-		return
-	}
-	newStatus, ok := oldObj.(statusCheck)
-	if !ok {
-		return
-	}
-	or, os := oldStatus.Ready()
-	nr, ns := newStatus.Ready()
-	if or == nr && os == ns {
-		return
-	}
-	w.enqeueueMsg(meta)
+	w.enqeueueMsg(meta, newObj)
 }
 
 func (w cmsWatcher) OnDelete(obj interface{}) {
 	return
 }
 
-func (w cmsWatcher) enqeueueMsg(obj metav1.Object) {
+func (w cmsWatcher) enqeueueMsg(obj metav1.Object, site interface{}) {
 	if !obj.GetDeletionTimestamp().IsZero() {
 		return
 	}
-	msg, pr, err := w.previewSiteUpdate(obj)
+	ue, err := w.previewSiteUpdate(site)
 	if err != nil {
 		klog.Errorf("dropping event for sc %v/%v: %v", obj.GetNamespace(), obj.GetName(), err)
 		return
 	}
-	ue := UpdateEvent{
-		Message:     msg,
-		PR:          pr,
-		RepoURL:     obj.GetAnnotations()[repoAnnotation],
-		Type:        fmt.Sprintf("%TUpdate", obj),
-		Annotations: obj.GetAnnotations(),
-	}
+	ue.Type = fmt.Sprintf("%TUpdate", site)
 	if len(w.updateEvents) == cap(w.updateEvents) {
 		klog.Errorf("dropping event %v due to channel capacity: len(%v) == cap(%v)", ue, len(w.updateEvents), cap(w.updateEvents))
 		return
@@ -80,7 +57,7 @@ func (w cmsWatcher) enqeueueMsg(obj metav1.Object) {
 
 func validMeta(obj interface{}) metav1.Object {
 	switch obj.(type) {
-	case drupalapi.DrupalSite, typo3api.Typo3Site, wordpressapi.Wordpress:
+	case *drupalapi.DrupalSite, *typo3api.Typo3Site, *wordpressapi.Wordpress:
 		meta, ok := obj.(metav1.ObjectMetaAccessor)
 		if !ok {
 			return nil
