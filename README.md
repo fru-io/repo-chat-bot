@@ -1,39 +1,27 @@
-# GitHub and GitLab PR/MR bot for DDEV-Live
+# DDEV-Live Repo Chat Bot Library
 
-This repository contains common functionality for GitHub and GitLab bot. DDEV-Live users will be able to 
-communicate with ddev-live platform using PR or MR comments formatted as commands. Initial scope is limited to only 
-preview sites, also known as site cloning for PRs/MRs.
+![DDEV-Live logo](docs/ddev_logo.png)
 
-#### Core GitHub/GitLab bot tasks described in:
-* https://github.com/drud/ddev-live/issues/517 - GitHub bot
-* https://github.com/drud/ddev-live/issues/516 - GitLab support
+This repository provides common functionality for GitHub and GitLab bot which enables DDEV-Live users
+to communicate with the platform using comments on PRs or MRs formatted as `commands`.
 
-#### Initial set of commands, responses and triggers we would like to support:
-* https://github.com/drud/ddev-live/issues/512 - command: create a preview site
-* https://github.com/drud/ddev-live/issues/511 - notification: preview site is building
-* https://github.com/drud/ddev-live/issues/510 - trigger: delete preview site on PR/MR close
-* https://github.com/drud/ddev-live/issues/513 - notification: preview site deleted
-* https://github.com/drud/ddev-live/issues/514 - notification: preview site build errors
-* https://github.com/drud/ddev-live/issues/515 - notification: preview site build completed
+The library works in conjunction with [ddev-live-sdk](https://github.com/drud/ddev-live-sdk) and expects
+the DDEV-Live platform to be deployed on a kubernetes cluster.
 
-## Integration configuration
+## Usage
 
-For GitHub, this requires read and write access to `issues` and `pull requests` scope, the bot will be available on
-repositories selected in the GitHub Apps user installation.
+This is currently used by [github-operator](https://github.com/drud/github-operator) and 
+[gitlab-webhook-server](https://github.com/drud/gitlab-webhook-server). They both serve as webhook servers
+watching on events from respective git providers and respond back with information to the user.
 
-For GitLab, this requires `api` scope on the issued PAT and the bot will be available on all repositories referenced
-by user created `SiteImageSource`.
+Currently supported commands are:
 
-#### Basic test
+| Command | Explanation |
+|---------|-------------|
+|`/ddev-live-preview-site` | Provision new preview site or report back the most current status of the preview site.|
+|`/ddev-live-delete-preview-site` | Manually trigger deletion of the preview site when you no longer require it.|
+|`/ddev-live-help` | Display usage and help message how to interact with DDEV-Live bot.|
 
-The repo-chat-bot supports simple ping/pong command response to test the integration:
-
-Comment on PR/MR with ddev-live command:
-```
-/ddev-live-ping
-```
-
-Bot should promptly respond in a following comment:
-```
-ddev-live-pong
-```
+There are also automatic triggers built in:
+* **New PRs created**, that can be used for preview site creation - triggers `/ddev-live-help` to provide basic information for the user
+* **PR is closed** both by merge or without merging, the preview site is automatically deleted as if user called `/ddev-live-delete-preview-site`
