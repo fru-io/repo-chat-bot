@@ -20,12 +20,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	common "github.com/drud/cms-common/api/v1beta1"
+	git "github.com/whilp/git-urls"
 	v1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -259,11 +259,20 @@ type UpdateEvent struct {
 	Annotations map[string]string
 }
 
+func repoURLNorm(url string) string {
+	url = strings.TrimSuffix(url, ".git")
+	u, err := git.Parse(url)
+	if err != nil {
+		return url
+	}
+	return fmt.Sprintf("%v/%v", u.Hostname(), u.Path)
+}
+
 func sisMatches(sis *siteapi.SiteImageSource, repoURL, originBranch string) bool {
-	if sis.Spec.GitSource.URL == repoURL && sis.Spec.GitSource.Revision == originBranch {
+	if repoURLNorm(sis.Spec.GitSource.URL) == repoURLNorm(repoURL) && sis.Spec.GitSource.Revision == originBranch {
 		return true
 	}
-	parsed, err := url.Parse(repoURL)
+	parsed, err := git.Parse(repoURL)
 	if err != nil {
 		klog.Errorf("failed to parse URL %q: %v", repoURL, err)
 		return false
