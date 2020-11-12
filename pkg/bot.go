@@ -87,6 +87,8 @@ type bot struct {
 type kubeClients struct {
 	// this is used to determine which sites are build by which operator
 	annotation string
+	// clone site name suffix
+	siteSuffix string
 	// used to wait for all informer caches to get synced
 	wait chan bool
 
@@ -113,7 +115,7 @@ type kubeClients struct {
 	podLister     corelister.PodLister
 }
 
-func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan struct{}) (Bot, error) {
+func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, stopCh <-chan struct{}) (Bot, error) {
 	scs, err := siteclientset.NewForConfig(kubeconfig)
 	if err != nil {
 		return nil, err
@@ -159,6 +161,7 @@ func InitBot(kubeconfig *restclient.Config, annotation string, stopCh <-chan str
 
 	kubeClients := kubeClients{
 		annotation:    annotation,
+		siteSuffix:    siteSuffix,
 		wait:          make(chan bool, 1),
 		siteClientSet: scs,
 		sisInformer:   sisInformer,
@@ -315,11 +318,11 @@ func filterSc(list []*siteapi.SiteClone, repoURL string, pr int) []*siteapi.Site
 	return filtered
 }
 
-func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotations map[string]string) *siteapi.SiteClone {
+func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotations map[string]string, suffix string) *siteapi.SiteClone {
 	return &siteapi.SiteClone{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   sis.Namespace,
-			Name:        fmt.Sprintf("%v-pr%v", sis.Name, pr),
+			Name:        fmt.Sprintf("%v-%v%v", sis.Name, suffix, pr),
 			Annotations: annotations,
 		},
 		Spec: siteapi.SiteCloneSpec{
@@ -327,7 +330,7 @@ func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotat
 				Name: sis.Name,
 			},
 			Clone: siteapi.CloneSpec{
-				Name:     fmt.Sprintf("%v-pr%v", sis.Name, pr),
+				Name:     fmt.Sprintf("%v-%v%v", sis.Name, suffix, pr),
 				Revision: cloneBranch,
 			},
 		},
@@ -396,7 +399,7 @@ func (b *bot) previewSite(args ResponseRequest) string {
 	args.Annotations[prAnnotation] = fmt.Sprintf("%d", args.PR)
 	args.Annotations[repoAnnotation] = args.RepoURL
 	for _, sis := range filtered {
-		siteclone := siteClone(sis, args.CloneBranch, args.PR, args.Annotations)
+		siteclone := siteClone(sis, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)
 		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
