@@ -27,6 +27,9 @@ import (
 
 // These strings contain supported `/ddev-live-*` commands in PR/MR comments
 const (
+	// DDEV-Live bot message marker
+	MessageMarker = "<!-- ddev-live bot -->"
+
 	// Command prefix
 	commandPrefix = "/ddev-live-"
 
@@ -131,6 +134,10 @@ type buildStatus struct {
 	logs      string
 }
 
+func IsBotMessage(msg string) bool {
+	return strings.HasPrefix(msg, MessageMarker)
+}
+
 func getCommonStatus(t3 *typo3api.Typo3Site) siteStatus {
 	var conditions []common.Condition
 	for _, c := range t3.Status.Conditions {
@@ -170,14 +177,4 @@ func previewCreating(sc *siteapi.SiteClone, site siteStatus, bs buildStatus) str
 		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site `%v` in `%v` is waiting for preview URL", msg, sc.Spec.Clone.Name, sc.Namespace)
 	}
 	return fmt.Sprintf("**Preview site created** %v\n**Preview URL:** %v", msg, site.webStatus.URLs[0])
-}
-
-func isBot(msg string) bool {
-	if msg == helpResponse {
-		return true
-	}
-	if strings.HasPrefix(msg, deleteSiteNone) {
-		return true
-	}
-	return false
 }
