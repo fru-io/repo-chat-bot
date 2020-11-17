@@ -211,7 +211,7 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, stopC
 }
 
 func (b *bot) Response(args ResponseRequest) string {
-	if isBot(args.Body) {
+	if IsBotMessage(args.Body) {
 		return ""
 	}
 	lines := strings.Split(strings.Replace(args.Body, "\r\n", "\n", -1), "\n")
@@ -241,7 +241,11 @@ func (b *bot) Response(args ResponseRequest) string {
 	for _, msg := range resp {
 		r = append(r, msg)
 	}
-	return strings.Join(r, "\n\n")
+	if len(r) == 0 {
+		return ""
+	} else {
+		return fmt.Sprintf("%v\n%v", MessageMarker, strings.Join(r, "\n\n"))
+	}
 }
 
 type ResponseRequest struct {
@@ -262,17 +266,17 @@ type UpdateEvent struct {
 	Annotations map[string]string
 }
 
-func repoURLNorm(url string) string {
+func RepoURLNormalize(url string) string {
 	url = strings.TrimSuffix(url, ".git")
 	u, err := git.Parse(url)
 	if err != nil {
 		return url
 	}
-	return fmt.Sprintf("%v/%v", u.Hostname(), u.Path)
+	return fmt.Sprintf("%v/%v", u.Hostname(), strings.TrimLeft(u.Path, "/"))
 }
 
 func sisMatches(sis *siteapi.SiteImageSource, repoURL, originBranch string) bool {
-	if repoURLNorm(sis.Spec.GitSource.URL) == repoURLNorm(repoURL) && sis.Spec.GitSource.Revision == originBranch {
+	if RepoURLNormalize(sis.Spec.GitSource.URL) == RepoURLNormalize(repoURL) && sis.Spec.GitSource.Revision == originBranch {
 		return true
 	}
 	parsed, err := git.Parse(repoURL)
@@ -426,6 +430,9 @@ func (b *bot) previewSite(args ResponseRequest) string {
 
 func (b *bot) ReceiveUpdate() (UpdateEvent, error) {
 	for msg := range b.scWatcher.updateEvents {
+		if msg.Message != "" {
+			msg.Message = fmt.Sprintf("%v\n%v", MessageMarker, msg.Message)
+		}
 		return msg, nil
 	}
 	return UpdateEvent{}, io.EOF
