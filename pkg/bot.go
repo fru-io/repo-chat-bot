@@ -266,17 +266,17 @@ type UpdateEvent struct {
 	Annotations map[string]string
 }
 
-func repoURLNorm(url string) string {
+func RepoURLNormalize(url string) string {
 	url = strings.TrimSuffix(url, ".git")
 	u, err := git.Parse(url)
 	if err != nil {
 		return url
 	}
-	return fmt.Sprintf("%v/%v", u.Hostname(), u.Path)
+	return fmt.Sprintf("%v/%v", u.Hostname(), strings.TrimLeft(u.Path, "/"))
 }
 
 func sisMatches(sis *siteapi.SiteImageSource, repoURL, originBranch string) bool {
-	if repoURLNorm(sis.Spec.GitSource.URL) == repoURLNorm(repoURL) && sis.Spec.GitSource.Revision == originBranch {
+	if RepoURLNormalize(sis.Spec.GitSource.URL) == RepoURLNormalize(repoURL) && sis.Spec.GitSource.Revision == originBranch {
 		return true
 	}
 	parsed, err := git.Parse(repoURL)
