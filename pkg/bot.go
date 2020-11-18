@@ -220,21 +220,25 @@ func (b *bot) Response(args ResponseRequest) string {
 		if !strings.HasPrefix(line, commandPrefix) {
 			continue
 		}
+		var r string
 		switch line {
 		case Ping:
-			resp[line] = pong
+			r = pong
 		case Help:
-			resp[line] = b.helpResponse(args, true)
+			r = b.helpResponse(args, true)
 		case HelpOnPROpen:
-			resp[line] = b.helpResponse(args, false)
+			r = b.helpResponse(args, false)
 		case PreviewSite:
-			resp[line] = b.previewSite(args)
+			r = b.previewSite(args)
 		case DeletePreviewSite:
-			resp[line] = b.deletePreviewSite(args, true)
+			r = b.deletePreviewSite(args, true)
 		case ClosePreviewSite:
-			resp[line] = b.deletePreviewSite(args, false)
+			r = b.deletePreviewSite(args, false)
 		default:
-			resp[line] = fmt.Sprintf("Unknown command: `%v`", line)
+			r = fmt.Sprintf("Unknown command: `%v`", line)
+		}
+		if len(r) != 0 {
+			resp[line] = r
 		}
 	}
 	var r []string
