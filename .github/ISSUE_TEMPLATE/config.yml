@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature request
+    url: https://ddevhq.atlassian.net/secure/CreateIssue.jspa?issuetype=10001&pid=10102
+    about: Submit a feature request here.
+  - name: Report a Bug
+    url: https://ddevhq.atlassian.net/secure/CreateIssue.jspa?issuetype=10004&pid=10000 
+    about: File a bug report here.
