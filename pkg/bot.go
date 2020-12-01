@@ -420,8 +420,8 @@ func (b *bot) previewSite(args ResponseRequest) string {
 		}
 		if sc, err := b.siteClientSet.SiteV1beta1().SiteClones(sis.Namespace).Create(siteclone); err != nil {
 			if !kerrors.IsAlreadyExists(err) {
-				klog.Errorf("failed to create site clone %v: %v", siteclone, err)
-				msgs = append(msgs, fmt.Sprintf(previewSiteError, siteclone.Spec.Origin.Name))
+				klog.Errorf("failed to create site clone %v: %v", sc, err)
+				msgs = append(msgs, fmt.Sprintf(previewSiteError, sc.Spec.Origin.Name))
 				continue
 			}
 			ue, _ := b.previewSiteUpdate(sc)

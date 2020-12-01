@@ -163,7 +163,8 @@ func previewCreating(sc *siteapi.SiteClone, site siteStatus, bs buildStatus) str
 	}
 	msg := fmt.Sprintf(previewCreatingMsg, sc.Name, sc.Namespace, sc.Namespace, sc.Name, sc.Namespace, sc.Spec.Clone.Name)
 	if err := sc.Error(); err != nil {
-		return fmt.Sprintf("**Creating preview site** %v\n**Failed:** %v", msg, err)
+		errLog := fmt.Sprintf(siteBuildErrorLog, err)
+		return fmt.Sprintf("**Creating preview site** %v\n**Failed**\n%v", msg, errLog)
 	}
 	scReady, scReadyMsg := sc.Ready()
 	if !scReady {
