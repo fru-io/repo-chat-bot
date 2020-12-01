@@ -326,19 +326,19 @@ func filterSc(list []*siteapi.SiteClone, repoURL string, pr int) []*siteapi.Site
 	return filtered
 }
 
-func siteClone(sis *siteapi.SiteImageSource, cloneBranch string, pr int, annotations map[string]string, suffix string) *siteapi.SiteClone {
+func siteClone(site metav1.Object, cloneBranch string, pr int, annotations map[string]string, suffix string) *siteapi.SiteClone {
 	return &siteapi.SiteClone{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace:   sis.Namespace,
-			Name:        fmt.Sprintf("%v-%v%v", sis.Name, suffix, pr),
+			Namespace:   site.GetNamespace(),
+			Name:        fmt.Sprintf("%v-%v%v", site.GetName(), suffix, pr),
 			Annotations: annotations,
 		},
 		Spec: siteapi.SiteCloneSpec{
 			Origin: siteapi.OriginSpec{
-				Name: sis.Name,
+				Name: site.GetName(),
 			},
 			Clone: siteapi.CloneSpec{
-				Name:     fmt.Sprintf("%v-%v%v", sis.Name, suffix, pr),
+				Name:     fmt.Sprintf("%v-%v%v", site.GetName(), suffix, pr),
 				Revision: cloneBranch,
 			},
 		},
@@ -407,7 +407,12 @@ func (b *bot) previewSite(args ResponseRequest) string {
 	args.Annotations[prAnnotation] = fmt.Sprintf("%d", args.PR)
 	args.Annotations[repoAnnotation] = args.RepoURL
 	for _, sis := range filtered {
-		siteclone := siteClone(sis, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)
+		site, err := b.getSiteForSIS(sis)
+		if err != nil {
+			klog.Errorf("failed to find site for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
+			continue
+		}
+		siteclone := siteClone(site, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)
 		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
@@ -440,6 +445,40 @@ func (b *bot) ReceiveUpdate() (UpdateEvent, error) {
 		return msg, nil
 	}
 	return UpdateEvent{}, io.EOF
+}
+
+func isOwnedBy(obj metav1.Object, owner metav1.Object) bool {
+	for _, ownerRef := range obj.GetOwnerReferences() {
+		if ownerRef.UID == owner.GetUID() {
+			return true
+		}
+	}
+	return false
+}
+
+func (k kubeClients) getSiteForSIS(sis *siteapi.SiteImageSource) (metav1.Object, error) {
+	if sites, err := k.dLister.DrupalSites(sis.Namespace).List(labels.Everything()); err == nil {
+		for _, site := range sites {
+			if isOwnedBy(sis, site) {
+				return site, nil
+			}
+		}
+	}
+	if sites, err := k.tLister.Typo3Sites(sis.Namespace).List(labels.Everything()); err == nil {
+		for _, site := range sites {
+			if isOwnedBy(sis, site) {
+				return site, nil
+			}
+		}
+	}
+	if sites, err := k.wLister.Wordpresses(sis.Namespace).List(labels.Everything()); err == nil {
+		for _, site := range sites {
+			if isOwnedBy(sis, site) {
+				return site, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("Site for SiteImageSource %v/%v not found", sis.Namespace, sis.Name)
 }
 
 func (k kubeClients) getSiteStatus(namespace, name string) (siteStatus, error) {
