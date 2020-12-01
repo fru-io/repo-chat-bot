@@ -46,7 +46,7 @@ func (w scWatcher) OnUpdate(oldObj, newObj interface{}) {
 	}
 	nr, nm := n.Ready()
 	or, om := o.Ready()
-	if nr == or && nm == om {
+	if nr == or && nm == om && n.Error() == o.Error() {
 		return
 	}
 	w.enqueueMsg(o)
