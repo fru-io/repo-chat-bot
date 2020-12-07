@@ -18,6 +18,7 @@ package pkg
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strconv"
@@ -57,6 +58,12 @@ import (
 	siteapi "github.com/drud/ddev-live-sdk/golang/pkg/site/apis/site/v1beta1"
 	typo3api "github.com/drud/ddev-live-sdk/golang/pkg/typo3/apis/cms/v1beta1"
 	wordpressapi "github.com/drud/ddev-live-sdk/golang/pkg/wordpress/apis/cms/v1beta1"
+
+	pbAdmin "github.com/drud/admin-api/gen/live/administration/v1alpha1"
+	"google.golang.org/grpc"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcmeta "google.golang.org/grpc/metadata"
+	grpcstatus "google.golang.org/grpc/status"
 )
 
 const (
@@ -113,9 +120,36 @@ type kubeClients struct {
 	// core API client and lister
 	coreClientSet *kubernetes.Clientset
 	podLister     corelister.PodLister
+
+	// gRPC auth admin service
+	authClient pbAdmin.AdministrationClient
 }
 
-func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, stopCh <-chan struct{}) (Bot, error) {
+func authAdminAPI(k *kubernetes.Clientset, authSVCLabels string) (pbAdmin.AdministrationClient, error) {
+	svcs, err := k.CoreV1().Services("").List(metav1.ListOptions{LabelSelector: authSVCLabels})
+	if err != nil {
+		return nil, err
+	}
+	if len(svcs.Items) != 1 {
+		return nil, fmt.Errorf("failed to lookup admin gRPC service for labels %v, expected exactly 1, found %v", authSVCLabels, len(svcs.Items))
+	}
+	svc := svcs.Items[0]
+	port := int32(8443)
+	for _, p := range svc.Spec.Ports {
+		if p.Name == "grpc" {
+			port = p.Port
+			break
+		}
+	}
+	grpcURL := fmt.Sprintf("%v.%v.svc:%v", svc.Name, svc.Namespace, port)
+	conn, err := grpc.Dial(grpcURL, grpc.WithInsecure())
+	if err != nil {
+		return nil, err
+	}
+	return pbAdmin.NewAdministrationClient(conn), nil
+}
+
+func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authSVCLabels string, stopCh <-chan struct{}) (Bot, error) {
 	scs, err := siteclientset.NewForConfig(kubeconfig)
 	if err != nil {
 		return nil, err
@@ -156,6 +190,10 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, stopC
 
 	kf := kubefactory.NewSharedInformerFactory(kcs, defaultResyncPeriod)
 	podLister := kf.Core().V1().Pods().Lister()
+	adminClient, err := authAdminAPI(kcs, authSVCLabels)
+	if err != nil {
+		return nil, err
+	}
 
 	updateEvents := make(chan UpdateEvent, chanSize)
 
@@ -176,6 +214,7 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, stopC
 		wInformer:     wInformer,
 		podLister:     podLister,
 		coreClientSet: kcs,
+		authClient:    adminClient,
 	}
 	scWatcher := scWatcher{
 		updateEvents: updateEvents,
@@ -253,6 +292,7 @@ func (b *bot) Response(args ResponseRequest) string {
 }
 
 type ResponseRequest struct {
+	Email        string
 	Body         string
 	RepoURL      string
 	Namespace    string
@@ -378,6 +418,15 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 	filtered := filterSc(list, args.RepoURL, args.PR)
 	var msgs []string
 	for _, sc := range filtered {
+		if verboseErrors {
+			if allow, err := b.hasPreviewSiteCapability(args.Email, sc.Namespace); err != nil {
+				msgs = append(msgs, previewGenericError)
+				continue
+			} else if !allow {
+				msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sc.Namespace))
+				continue
+			}
+		}
 		if err := b.siteClientSet.SiteV1beta1().SiteClones(sc.Namespace).Delete(sc.Name, nil); err != nil && !kerrors.IsNotFound(err) {
 			// error asking API to delete SiteClone other than IsNotFound
 			klog.Errorf("failed to delete SiteClone %v/%v: %v", sc.Namespace, sc.Name, err)
@@ -395,6 +444,25 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 	return strings.Join(msgs, "\n\n")
 }
 
+func (b *bot) hasPreviewSiteCapability(email, org string) (bool, error) {
+	ctx := context.Background()
+	metaCtx := grpcmeta.AppendToOutgoingContext(ctx, "x-ddev-workspace", org)
+	caps, err := b.authClient.ListCapabilities(metaCtx, &pbAdmin.ListCapabilitiesRequest{Email: email})
+	if err != nil {
+		if grpcstatus.Code(err) == grpccodes.NotFound {
+			return false, nil
+		}
+		klog.Errorf("failed querying capabilities for user %v: %v", email, err)
+		return false, err
+	}
+	for _, c := range caps.Capabilities {
+		if c == pbAdmin.Capability_SiteEditor {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (b *bot) previewSite(args ResponseRequest) string {
 	list, err := b.sisLister.List(labels.Everything())
 	if err != nil {
@@ -410,6 +478,13 @@ func (b *bot) previewSite(args ResponseRequest) string {
 		site, err := b.getSiteForSIS(sis)
 		if err != nil {
 			klog.Errorf("failed to find site for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
+			continue
+		}
+		if allow, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
+			msgs = append(msgs, previewGenericError)
+			continue
+		} else if !allow {
+			msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sis.Namespace))
 			continue
 		}
 		siteclone := siteClone(site, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)

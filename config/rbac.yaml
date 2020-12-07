@@ -31,6 +31,7 @@ rules:
   resources:
   - pods
   - pods/log
+  - services
   verbs:
   - get
   - list
