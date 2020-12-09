@@ -65,6 +65,10 @@ const (
 		DeletePreviewSite + " - deletes the preview site\n" +
 		"```"
 
+	// Preview denied is a message that preview bot sends when user doesn't have necessary capability
+	// logs will contain more information about the reason why user has been denied if it is anything else except user missing SiteEditor capability
+	previewDenied = "**Unauthorized** `%v` preview site command, please contact your DDEV-Live account owner for `%v`"
+
 	// Generic error when site cloning failed. We don't want to expose internal details on PR comments,
 	// logs will contain more information about what failed
 	previewGenericError = "**Internal error** creating preview sites"
