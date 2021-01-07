@@ -480,6 +480,10 @@ func (b *bot) previewSite(args ResponseRequest) string {
 			klog.Errorf("failed to find site for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
 			continue
 		}
+		if args.Email == "" {
+			msgs = append(msgs, previewDeniedMissingEmail)
+			continue
+		}
 		if allow, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
 			msgs = append(msgs, previewGenericError)
 			continue

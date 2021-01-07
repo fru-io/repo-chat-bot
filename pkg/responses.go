@@ -69,6 +69,9 @@ const (
 	// logs will contain more information about the reason why user has been denied if it is anything else except user missing SiteEditor capability
 	previewDenied = "**Unauthorized** `%v` preview site command, please contact your DDEV-Live account owner for `%v`"
 
+	// Preview missing email is a message that preview bot sends when user doesn't have their email configured for their account and we can't validate their authorization
+	previewDeniedMissingEmail = "**Unauthorized** preview site command. Please configure public email for your account"
+
 	// Generic error when site cloning failed. We don't want to expose internal details on PR comments,
 	// logs will contain more information about what failed
 	previewGenericError = "**Internal error** creating preview sites"
