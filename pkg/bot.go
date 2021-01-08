@@ -388,8 +388,10 @@ func siteClone(site metav1.Object, cloneBranch string, pr int, annotations map[s
 func (b *bot) helpResponse(args ResponseRequest, verbose bool) string {
 	if verbose {
 		// display bot help message when user asks for it even when there are no origin to clone from
+		HelpPreviewSiteCounter.WithLabelValues(b.annotation, b.siteSuffix).Inc()
 		return helpResponse
 	}
+	HelpPreviewSiteCounter.WithLabelValues(b.annotation, metricLabelCommand).Inc()
 
 	list, err := b.sisLister.List(labels.Everything())
 	if err != nil {
@@ -406,6 +408,10 @@ func (b *bot) helpResponse(args ResponseRequest, verbose bool) string {
 }
 
 func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string {
+	ml := b.siteSuffix
+	if verboseErrors {
+		ml = metricLabelCommand
+	}
 	list, err := b.scLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("failed listing SiteClones: %v", err)
@@ -414,15 +420,18 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 		} else {
 			return ""
 		}
+		DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewFailed).Inc()
 	}
 	filtered := filterSc(list, args.RepoURL, args.PR)
 	var msgs []string
 	for _, sc := range filtered {
 		if verboseErrors {
 			if allow, err := b.hasPreviewSiteCapability(args.Email, sc.Namespace); err != nil {
+				DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewAuthAPIError).Inc()
 				msgs = append(msgs, previewGenericError)
 				continue
 			} else if !allow {
+				DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewDenied).Inc()
 				msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sc.Namespace))
 				continue
 			}
@@ -433,8 +442,10 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 			if verboseErrors {
 				msgs = append(msgs, fmt.Sprintf(deleteSiteError, sc.Spec.Clone.Name, sc.Namespace))
 			}
+			DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewFailed).Inc()
 		} else if err == nil {
 			// no error, we have successfully deleted SiteClone
+			DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewSuccess).Inc()
 			msgs = append(msgs, fmt.Sprintf(deleteSite, sc.Spec.Clone.Name, sc.Namespace))
 		}
 	}
@@ -464,9 +475,14 @@ func (b *bot) hasPreviewSiteCapability(email, org string) (bool, error) {
 }
 
 func (b *bot) previewSite(args ResponseRequest) string {
+	if args.Email == "" {
+		CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewDeniedMissingEmail).Inc()
+		return previewDeniedMissingEmail
+	}
 	list, err := b.sisLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("failed listing SiteImageSource: %v", err)
+		CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewFailed).Inc()
 		return previewGenericError
 	}
 	filtered := filterSis(list, args.RepoURL, args.OriginBranch)
@@ -480,19 +496,18 @@ func (b *bot) previewSite(args ResponseRequest) string {
 			klog.Errorf("failed to find site for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
 			continue
 		}
-		if args.Email == "" {
-			msgs = append(msgs, previewDeniedMissingEmail)
-			continue
-		}
 		if allow, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
 			msgs = append(msgs, previewGenericError)
+			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewAuthAPIError).Inc()
 			continue
 		} else if !allow {
 			msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sis.Namespace))
+			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewDenied).Inc()
 			continue
 		}
 		siteclone := siteClone(site, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)
 		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
+			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 			continue
@@ -500,12 +515,15 @@ func (b *bot) previewSite(args ResponseRequest) string {
 		if sc, err := b.siteClientSet.SiteV1beta1().SiteClones(sis.Namespace).Create(siteclone); err != nil {
 			if !kerrors.IsAlreadyExists(err) {
 				klog.Errorf("failed to create site clone %v: %v", siteclone, err)
+				CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewFailed).Inc()
 				msgs = append(msgs, fmt.Sprintf(previewSiteError, siteclone.Spec.Origin.Name))
 				continue
 			}
+			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 		} else {
+			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 		}

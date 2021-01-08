@@ -6,6 +6,7 @@ require (
 	github.com/drud/admin-api v0.4.2
 	github.com/drud/cms-common v0.0.7
 	github.com/drud/ddev-live-sdk v0.2.8
+	github.com/prometheus/client_golang v1.7.1
 	github.com/whilp/git-urls v1.0.0
 	google.golang.org/grpc v1.29.1
 	k8s.io/api v0.17.9
