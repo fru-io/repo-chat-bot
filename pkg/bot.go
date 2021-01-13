@@ -78,6 +78,16 @@ var (
 	logLimitBytes       = int64(4 * 1024)
 )
 
+type Config struct {
+	Kubeconfig     *restclient.Config
+	Annotation     string
+	SiteSuffix     string
+	AuthSVCLabels  string
+	StopCh         <-chan struct{}
+	AnalyticsKey   string
+	AnalyticsAppId string
+}
+
 type Bot interface {
 	Response(args ResponseRequest) string
 	ReceiveUpdate() (UpdateEvent, error)
@@ -87,6 +97,7 @@ type bot struct {
 	scWatcher    scWatcher
 	cmsWatcher   cmsWatcher
 	updateEvents chan UpdateEvent
+	analytics    *analytics
 
 	kubeClients
 }
@@ -149,24 +160,25 @@ func authAdminAPI(k *kubernetes.Clientset, authSVCLabels string) (pbAdmin.Admini
 	return pbAdmin.NewAdministrationClient(conn), nil
 }
 
-func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authSVCLabels string, stopCh <-chan struct{}) (Bot, error) {
-	scs, err := siteclientset.NewForConfig(kubeconfig)
+func InitBot(bc Config) (Bot, error) {
+	analytics := AnalyticsClient(bc.Annotation, bc.AnalyticsAppId, bc.AnalyticsKey)
+	scs, err := siteclientset.NewForConfig(bc.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	drupal, err := drupalclientset.NewForConfig(kubeconfig)
+	drupal, err := drupalclientset.NewForConfig(bc.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	typo3, err := typo3clientset.NewForConfig(kubeconfig)
+	typo3, err := typo3clientset.NewForConfig(bc.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	wordpress, err := wordpressclientset.NewForConfig(kubeconfig)
+	wordpress, err := wordpressclientset.NewForConfig(bc.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	kcs, err := kubernetes.NewForConfig(kubeconfig)
+	kcs, err := kubernetes.NewForConfig(bc.Kubeconfig)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +202,7 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authS
 
 	kf := kubefactory.NewSharedInformerFactory(kcs, defaultResyncPeriod)
 	podLister := kf.Core().V1().Pods().Lister()
-	adminClient, err := authAdminAPI(kcs, authSVCLabels)
+	adminClient, err := authAdminAPI(kcs, bc.AuthSVCLabels)
 	if err != nil {
 		return nil, err
 	}
@@ -198,8 +210,8 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authS
 	updateEvents := make(chan UpdateEvent, chanSize)
 
 	kubeClients := kubeClients{
-		annotation:    annotation,
-		siteSuffix:    siteSuffix,
+		annotation:    bc.Annotation,
+		siteSuffix:    bc.SiteSuffix,
 		wait:          make(chan bool, 1),
 		siteClientSet: scs,
 		sisInformer:   sisInformer,
@@ -229,16 +241,16 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authS
 	tInformer.AddEventHandler(cmsWatcher)
 	wInformer.AddEventHandler(cmsWatcher)
 
-	df.Start(stopCh)
-	tf.Start(stopCh)
-	wf.Start(stopCh)
-	sf.Start(stopCh)
-	kf.Start(stopCh)
-	df.WaitForCacheSync(stopCh)
-	tf.WaitForCacheSync(stopCh)
-	wf.WaitForCacheSync(stopCh)
-	sf.WaitForCacheSync(stopCh)
-	kf.WaitForCacheSync(stopCh)
+	df.Start(bc.StopCh)
+	tf.Start(bc.StopCh)
+	wf.Start(bc.StopCh)
+	sf.Start(bc.StopCh)
+	kf.Start(bc.StopCh)
+	df.WaitForCacheSync(bc.StopCh)
+	tf.WaitForCacheSync(bc.StopCh)
+	wf.WaitForCacheSync(bc.StopCh)
+	sf.WaitForCacheSync(bc.StopCh)
+	kf.WaitForCacheSync(bc.StopCh)
 	close(kubeClients.wait)
 
 	return &bot{
@@ -246,6 +258,7 @@ func InitBot(kubeconfig *restclient.Config, annotation, siteSuffix string, authS
 		cmsWatcher:   cmsWatcher,
 		updateEvents: updateEvents,
 		kubeClients:  kubeClients,
+		analytics:    analytics,
 	}, nil
 }
 
@@ -388,10 +401,10 @@ func siteClone(site metav1.Object, cloneBranch string, pr int, annotations map[s
 func (b *bot) helpResponse(args ResponseRequest, verbose bool) string {
 	if verbose {
 		// display bot help message when user asks for it even when there are no origin to clone from
-		HelpPreviewSiteCounter.WithLabelValues(b.annotation, b.siteSuffix).Inc()
+		b.analytics.ObserveHelp(args.Email, metricLabelCommand)
 		return helpResponse
 	}
-	HelpPreviewSiteCounter.WithLabelValues(b.annotation, metricLabelCommand).Inc()
+	b.analytics.ObserveHelp(args.Email, b.siteSuffix)
 
 	list, err := b.sisLister.List(labels.Everything())
 	if err != nil {
@@ -416,22 +429,22 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 	if err != nil {
 		klog.Errorf("failed listing SiteClones: %v", err)
 		if verboseErrors {
+			b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewFailed)
 			return previewGenericError
 		} else {
 			return ""
 		}
-		DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewFailed).Inc()
 	}
 	filtered := filterSc(list, args.RepoURL, args.PR)
 	var msgs []string
 	for _, sc := range filtered {
 		if verboseErrors {
 			if allow, err := b.hasPreviewSiteCapability(args.Email, sc.Namespace); err != nil {
-				DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewAuthAPIError).Inc()
+				b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewAuthAPIError)
 				msgs = append(msgs, previewGenericError)
 				continue
 			} else if !allow {
-				DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewDenied).Inc()
+				b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewDenied)
 				msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sc.Namespace))
 				continue
 			}
@@ -442,14 +455,15 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 			if verboseErrors {
 				msgs = append(msgs, fmt.Sprintf(deleteSiteError, sc.Spec.Clone.Name, sc.Namespace))
 			}
-			DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewFailed).Inc()
+			b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewFailed)
 		} else if err == nil {
 			// no error, we have successfully deleted SiteClone
-			DeletePreviewSiteCounter.WithLabelValues(b.annotation, ml, metricLabelPreviewSuccess).Inc()
+			b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewSuccess)
 			msgs = append(msgs, fmt.Sprintf(deleteSite, sc.Spec.Clone.Name, sc.Namespace))
 		}
 	}
 	if len(msgs) == 0 && verboseErrors {
+		b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewNothingToDelete)
 		return fmt.Sprintf("%v\n___\n%v", deleteSiteNone, helpResponse)
 	}
 	return strings.Join(msgs, "\n\n")
@@ -476,13 +490,13 @@ func (b *bot) hasPreviewSiteCapability(email, org string) (bool, error) {
 
 func (b *bot) previewSite(args ResponseRequest) string {
 	if args.Email == "" {
-		CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewDeniedMissingEmail).Inc()
+		b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewDeniedMissingEmail)
 		return previewDeniedMissingEmail
 	}
 	list, err := b.sisLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("failed listing SiteImageSource: %v", err)
-		CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewFailed).Inc()
+		b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewFailed)
 		return previewGenericError
 	}
 	filtered := filterSis(list, args.RepoURL, args.OriginBranch)
@@ -498,16 +512,16 @@ func (b *bot) previewSite(args ResponseRequest) string {
 		}
 		if allow, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
 			msgs = append(msgs, previewGenericError)
-			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewAuthAPIError).Inc()
+			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewAuthAPIError)
 			continue
 		} else if !allow {
 			msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sis.Namespace))
-			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewDenied).Inc()
+			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewDenied)
 			continue
 		}
 		siteclone := siteClone(site, args.CloneBranch, args.PR, args.Annotations, b.siteSuffix)
 		if sc, err := b.scLister.SiteClones(siteclone.Namespace).Get(siteclone.Name); err == nil {
-			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
+			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewSuccess)
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 			continue
@@ -515,15 +529,15 @@ func (b *bot) previewSite(args ResponseRequest) string {
 		if sc, err := b.siteClientSet.SiteV1beta1().SiteClones(sis.Namespace).Create(siteclone); err != nil {
 			if !kerrors.IsAlreadyExists(err) {
 				klog.Errorf("failed to create site clone %v: %v", siteclone, err)
-				CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewFailed).Inc()
+				b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewFailed)
 				msgs = append(msgs, fmt.Sprintf(previewSiteError, siteclone.Spec.Origin.Name))
 				continue
 			}
-			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
+			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewSuccess)
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 		} else {
-			CreatePreviewSiteCounter.WithLabelValues(b.annotation, metricLabelPreviewSuccess).Inc()
+			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewSuccess)
 			ue, _ := b.previewSiteUpdate(sc)
 			msgs = append(msgs, ue.Message)
 		}
