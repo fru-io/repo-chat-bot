@@ -297,7 +297,8 @@ func (b *bot) Response(args ResponseRequest) string {
 	if IsBotMessage(args.Body) {
 		return ""
 	}
-	resp := b.response(args, args.Body)
+	all := fmt.Sprintf("%v\n%v", args.Title, args.Body)
+	resp := b.response(args, all)
 	if len(resp) == 0 {
 		resp = b.response(args, args.Trigger)
 	}
@@ -314,6 +315,7 @@ func (b *bot) Response(args ResponseRequest) string {
 
 type ResponseRequest struct {
 	Email        string
+	Title        string
 	Body         string
 	Trigger      string
 	RepoURL      string
