@@ -262,11 +262,8 @@ func InitBot(bc Config) (Bot, error) {
 	}, nil
 }
 
-func (b *bot) Response(args ResponseRequest) string {
-	if IsBotMessage(args.Body) {
-		return ""
-	}
-	lines := strings.Split(strings.Replace(args.Body, "\r\n", "\n", -1), "\n")
+func (b *bot) response(args ResponseRequest, body string) map[string]string {
+	lines := strings.Split(strings.Replace(body, "\r\n", "\n", -1), "\n")
 	resp := make(map[string]string)
 	for _, line := range lines {
 		if !strings.HasPrefix(line, commandPrefix) {
@@ -293,6 +290,18 @@ func (b *bot) Response(args ResponseRequest) string {
 			resp[line] = r
 		}
 	}
+	return resp
+}
+
+func (b *bot) Response(args ResponseRequest) string {
+	if IsBotMessage(args.Body) {
+		return ""
+	}
+	all := fmt.Sprintf("%v\n%v", args.Title, args.Body)
+	resp := b.response(args, all)
+	if len(resp) == 0 {
+		resp = b.response(args, args.Trigger)
+	}
 	var r []string
 	for _, msg := range resp {
 		r = append(r, msg)
@@ -306,7 +315,9 @@ func (b *bot) Response(args ResponseRequest) string {
 
 type ResponseRequest struct {
 	Email        string
+	Title        string
 	Body         string
+	Trigger      string
 	RepoURL      string
 	Namespace    string
 	OriginBranch string
