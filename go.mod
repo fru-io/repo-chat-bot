@@ -5,8 +5,8 @@ go 1.15
 require (
 	github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869 // indirect
 	github.com/drud/admin-api v0.4.2
-	github.com/drud/cms-common v0.0.7
-	github.com/drud/ddev-live-sdk v0.2.8
+	github.com/drud/cms-common v0.0.10
+	github.com/drud/ddev-live-sdk v0.3.2
 	github.com/prometheus/client_golang v1.7.1
 	github.com/segmentio/backo-go v0.0.0-20160424052352-204274ad699c // indirect
 	github.com/whilp/git-urls v1.0.0
