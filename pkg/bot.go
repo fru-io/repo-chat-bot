@@ -344,8 +344,16 @@ func RepoURLNormalize(url string) string {
 }
 
 func sisMatches(sis *siteapi.SiteImageSource, repoURL, originBranch string) bool {
-	if RepoURLNormalize(sis.Spec.GitSource.URL) == RepoURLNormalize(repoURL) && sis.Spec.GitSource.Revision == originBranch {
-		return true
+	if RepoURLNormalize(sis.Spec.GitSource.URL) == RepoURLNormalize(repoURL) {
+		if sis.Spec.GitSource.Revision != "" {
+			if sis.Spec.GitSource.Revision == originBranch {
+				return true
+			}
+		} else {
+			if sis.Status.Github.Branch == originBranch {
+				return true
+			}
+		}
 	}
 	parsed, err := git.Parse(repoURL)
 	if err != nil {
@@ -362,9 +370,18 @@ func sisMatches(sis *siteapi.SiteImageSource, repoURL, originBranch string) bool
 	}
 	repo := split[2]
 	org := split[1]
-	return sis.Spec.GitHubSourceDeprecated.RepoName == repo &&
-		sis.Spec.GitHubSourceDeprecated.OrgName == org &&
-		sis.Spec.GitHubSourceDeprecated.Branch == originBranch
+	if sis.Spec.GitHubSourceDeprecated.RepoName == repo && sis.Spec.GitHubSourceDeprecated.OrgName == org {
+		if sis.Spec.GitHubSourceDeprecated.Branch != "" {
+			if sis.Spec.GitHubSourceDeprecated.Branch == originBranch {
+				return true
+			} else {
+				if sis.Status.Github.Branch == originBranch {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func filterSis(list []*siteapi.SiteImageSource, repoURL, originBranch string) []*siteapi.SiteImageSource {
