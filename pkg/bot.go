@@ -131,6 +131,7 @@ type kubeClients struct {
 	// core API client and lister
 	coreClientSet *kubernetes.Clientset
 	podLister     corelister.PodLister
+	nsLister      corelister.NamespaceLister
 
 	// gRPC auth admin service
 	authClient pbAdmin.AdministrationClient
@@ -202,6 +203,7 @@ func InitBot(bc Config) (Bot, error) {
 
 	kf := kubefactory.NewSharedInformerFactory(kcs, defaultResyncPeriod)
 	podLister := kf.Core().V1().Pods().Lister()
+	nsLister := kf.Core().V1().Namespaces().Lister()
 	adminClient, err := authAdminAPI(kcs, bc.AuthSVCLabels)
 	if err != nil {
 		return nil, err
@@ -468,13 +470,13 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 	var msgs []string
 	for _, sc := range filtered {
 		if verboseErrors {
-			if allow, err := b.hasPreviewSiteCapability(args.Email, sc.Namespace); err != nil {
+			if allow, ws, err := b.hasPreviewSiteCapability(args.Email, sc.Namespace); err != nil {
 				b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewAuthAPIError)
 				msgs = append(msgs, previewGenericError)
 				continue
 			} else if !allow {
 				b.analytics.ObserveDeletePreviewSite(args.Email, ml, metricLabelPreviewDenied)
-				msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sc.Namespace))
+				msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, ws))
 				continue
 			}
 		}
@@ -498,23 +500,38 @@ func (b *bot) deletePreviewSite(args ResponseRequest, verboseErrors bool) string
 	return strings.Join(msgs, "\n\n")
 }
 
-func (b *bot) hasPreviewSiteCapability(email, org string) (bool, error) {
+func (k kubeClients) getWorkspace(org string) string {
+	ns, err := k.nsLister.Get(org)
+	if err != nil {
+		klog.Errorf("failed to find namespace %v: %v", org, err)
+		return org
+	}
+	// for legacy organizations, ws == namespace == org
+	if ns.Labels["ddev.live/displayname"] != "" && ns.Labels["ddev.live/subscriptionstub"] != "" {
+		// new organizations ws are derived from namespace labels
+		return fmt.Sprintf("%v.%v", ns.Labels["ddev.live/subscriptionstub"], ns.Labels["ddev.live/displayname"])
+	}
+	return org
+}
+
+func (k kubeClients) hasPreviewSiteCapability(email, org string) (bool, string, error) {
 	ctx := context.Background()
-	metaCtx := grpcmeta.AppendToOutgoingContext(ctx, "x-ddev-workspace", org)
-	caps, err := b.authClient.ListCapabilities(metaCtx, &pbAdmin.ListCapabilitiesRequest{Email: email})
+	ws := k.getWorkspace(org)
+	metaCtx := grpcmeta.AppendToOutgoingContext(ctx, "x-ddev-workspace", ws)
+	caps, err := k.authClient.ListCapabilities(metaCtx, &pbAdmin.ListCapabilitiesRequest{Email: email})
 	if err != nil {
 		if grpcstatus.Code(err) == grpccodes.NotFound {
-			return false, nil
+			return false, ws, nil
 		}
 		klog.Errorf("failed querying capabilities for user %v: %v", email, err)
-		return false, err
+		return false, ws, err
 	}
 	for _, c := range caps.Capabilities {
 		if c == pbAdmin.Capability_SiteEditor {
-			return true, nil
+			return true, ws, nil
 		}
 	}
-	return false, nil
+	return false, ws, nil
 }
 
 func (b *bot) previewSite(args ResponseRequest) string {
@@ -539,12 +556,12 @@ func (b *bot) previewSite(args ResponseRequest) string {
 			klog.Errorf("failed to find site for SiteImageSource %v/%v: %v", sis.Namespace, sis.Name, err)
 			continue
 		}
-		if allow, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
+		if allow, ws, err := b.hasPreviewSiteCapability(args.Email, sis.Namespace); err != nil {
 			msgs = append(msgs, previewGenericError)
 			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewAuthAPIError)
 			continue
 		} else if !allow {
-			msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, sis.Namespace))
+			msgs = append(msgs, fmt.Sprintf(previewDenied, args.Email, ws))
 			b.analytics.ObserveCreatePreviewSite(args.Email, metricLabelPreviewDenied)
 			continue
 		}
@@ -656,7 +673,7 @@ func (k kubeClients) previewSiteUpdateFromSiteClone(sc *siteapi.SiteClone) (Upda
 	} else {
 		bs = buildStatus{}
 	}
-	msg := previewCreating(sc, ss, bs)
+	msg := k.previewCreating(sc, ss, bs)
 	ue := UpdateEvent{
 		Message:     msg,
 		PR:          pr,

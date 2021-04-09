@@ -159,16 +159,17 @@ func getCommonStatus(t3 *typo3api.Typo3Site) siteStatus {
 	return siteStatus{conditions: conditions, webStatus: common.WebStatus(t3.Status.WebStatus)}
 }
 
-func previewCreating(sc *siteapi.SiteClone, site siteStatus, bs buildStatus) string {
+func (k kubeClients) previewCreating(sc *siteapi.SiteClone, site siteStatus, bs buildStatus) string {
+	ws := k.getWorkspace(sc.Namespace)
 	if bs.failed {
-		msg := fmt.Sprintf(siteBuildError, sc.Spec.Clone.Name, sc.Namespace, bs.failState, sc.Namespace, sc.Name, sc.Namespace, sc.Spec.Clone.Name)
+		msg := fmt.Sprintf(siteBuildError, sc.Spec.Clone.Name, ws, bs.failState, ws, sc.Name, ws, sc.Spec.Clone.Name)
 		if bs.logs != "" {
 			logs := fmt.Sprintf(siteBuildErrorLog, bs.logs)
 			msg = fmt.Sprintf("%v\n%v", msg, logs)
 		}
 		return msg
 	}
-	msg := fmt.Sprintf(previewCreatingMsg, sc.Name, sc.Namespace, sc.Namespace, sc.Name, sc.Namespace, sc.Spec.Clone.Name)
+	msg := fmt.Sprintf(previewCreatingMsg, sc.Name, ws, ws, sc.Name, ws, sc.Spec.Clone.Name)
 	if err := sc.Error(); err != nil {
 		errLog := fmt.Sprintf(siteBuildErrorLog, err)
 		return fmt.Sprintf("**Creating preview site** %v\n**Failed**\n%v", msg, errLog)
@@ -179,10 +180,10 @@ func previewCreating(sc *siteapi.SiteClone, site siteStatus, bs buildStatus) str
 	}
 	sReady, _ := common.Ready(site.conditions)
 	if !sReady {
-		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site `%v` in `%v` is getting ready", msg, sc.Spec.Clone.Name, sc.Namespace)
+		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site `%v` in `%v` is getting ready", msg, sc.Spec.Clone.Name, ws)
 	}
 	if len(site.webStatus.URLs) == 0 {
-		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site `%v` in `%v` is waiting for preview URL", msg, sc.Spec.Clone.Name, sc.Namespace)
+		return fmt.Sprintf("**Creating preview site** %v\n**Status:** Site `%v` in `%v` is waiting for preview URL", msg, sc.Spec.Clone.Name, ws)
 	}
 	return fmt.Sprintf("**Preview site created** %v\n**Preview URL:** %v", msg, site.webStatus.URLs[0])
 }
