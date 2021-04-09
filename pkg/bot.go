@@ -225,6 +225,7 @@ func InitBot(bc Config) (Bot, error) {
 		wLister:       wLister,
 		wInformer:     wInformer,
 		podLister:     podLister,
+		nsLister:      nsLister,
 		coreClientSet: kcs,
 		authClient:    adminClient,
 	}
